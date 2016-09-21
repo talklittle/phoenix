@@ -6,7 +6,9 @@ defmodule Phoenix.Endpoint.EndpointTest do
 
   @config [url: [host: {:system, "ENDPOINT_TEST_HOST"}, path: "/api"],
            static_url: [host: "static.example.com"],
-           server: false, http: [port: 80], https: [port: 443],
+           server: false,
+           http: [port: 80],
+           https: [port: 443],
            force_ssl: [subdomains: true],
            cache_static_manifest: "../../../../test/fixtures/manifest.json",
            pubsub: [adapter: Phoenix.PubSub.PG2, name: :endpoint_pub]]
@@ -147,5 +149,17 @@ defmodule Phoenix.Endpoint.EndpointTest do
     endpoint = Module.concat(__MODULE__, config.test)
     Application.put_env(:phoenix, endpoint, [])
     refute Phoenix.Endpoint.server?(:phoenix, endpoint)
+  end
+
+  test "handles non-keyword list in http/https config" do
+    config =
+      @config
+      |> put_in([:http], [{:port, 80}, :inet])
+      |> put_in([:https], [{:port, 443}, :inet])
+    assert Endpoint.config_change([{Endpoint, config}], []) == :ok
+    assert Enum.member?(Endpoint.config(:http), {:port, 80})
+    assert Enum.member?(Endpoint.config(:http), :inet)
+    assert Enum.member?(Endpoint.config(:https), {:port, 443})
+    assert Enum.member?(Endpoint.config(:https), :inet)
   end
 end
