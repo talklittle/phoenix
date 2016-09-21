@@ -7,11 +7,14 @@ defmodule Phoenix.Integration.EndpointTest do
 
   alias Phoenix.Integration.AdapterTest.ProdEndpoint
   alias Phoenix.Integration.AdapterTest.DevEndpoint
+  alias Phoenix.Integration.AdapterTest.ProdInet6Endpoint
 
   Application.put_env(:endpoint_int, ProdEndpoint,
       http: [port: "4807"], url: [host: "example.com"], server: true)
   Application.put_env(:endpoint_int, DevEndpoint,
       http: [port: "4808"], debug_errors: true)
+  Application.put_env(:endpoint_int, ProdInet6Endpoint,
+      http: [{:port, "4809"}, :inet6], url: [host: "example.com"], server: true)
 
   defmodule Router do
     @moduledoc """
@@ -69,7 +72,7 @@ defmodule Phoenix.Integration.EndpointTest do
     end
   end
 
-  for mod <- [ProdEndpoint, DevEndpoint] do
+  for mod <- [ProdEndpoint, DevEndpoint, ProdInet6Endpoint] do
     defmodule mod do
       use Phoenix.Endpoint, otp_app: :endpoint_int
       @before_compile Wrapper
@@ -90,8 +93,9 @@ defmodule Phoenix.Integration.EndpointTest do
     end
   end
 
-  @prod 4807
-  @dev  4808
+  @prod       4807
+  @dev        4808
+  @prod_inet6 4809
 
   alias Phoenix.Integration.HTTPClient
 
@@ -158,6 +162,37 @@ defmodule Phoenix.Integration.EndpointTest do
 
       Supervisor.stop(DevEndpoint)
       {:error, _reason} = HTTPClient.request(:get, "http://127.0.0.1:#{@dev}", %{})
+    end
+  end
+
+  test "adapters starts on configured port and serves requests and stops for prod IPv6" do
+    capture_log fn ->
+      # Has server: true
+      {:ok, _} = ProdInet6Endpoint.start_link()
+
+      # Requests
+      {:ok, resp} = HTTPClient.request(:get, "http://[::1]:#{@prod_inet6}", %{}, ipv6_host_with_brackets: true)
+      assert resp.status == 200
+      assert resp.body == "ok"
+
+      {:ok, resp} = HTTPClient.request(:get, "http://[::1]:#{@prod_inet6}/unknown", %{}, ipv6_host_with_brackets: true)
+      assert resp.status == 404
+      assert resp.body == "404.html from Phoenix.ErrorView"
+
+      assert capture_log(fn ->
+        {:ok, resp} = HTTPClient.request(:get, "http://[::1]:#{@prod_inet6}/oops", %{}, ipv6_host_with_brackets: true)
+        assert resp.status == 500
+        assert resp.body == "500.html from Phoenix.ErrorView"
+      end) =~ "** (RuntimeError) oops"
+
+      assert capture_log(fn ->
+        {:ok, resp} = HTTPClient.request(:get, "http://[::1]:#{@prod_inet6}/router/oops", %{}, ipv6_host_with_brackets: true)
+        assert resp.status == 500
+        assert resp.body == "500.html from Phoenix.ErrorView"
+      end) =~ "** (RuntimeError) oops"
+
+      Supervisor.stop(ProdInet6Endpoint)
+      {:error, _reason} = HTTPClient.request(:get, "http://[::1]:#{@prod_inet6}", %{}, ipv6_host_with_brackets: true)
     end
   end
 

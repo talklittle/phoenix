@@ -20,11 +20,11 @@ defmodule Phoenix.Integration.HTTPClient do
       {:error, ...}
 
   """
-  def request(method, url, headers, body \\ "")
-  def request(method, url, headers, body) when is_map body do
-    request(method, url, headers, URI.encode_query(body))
+  def request(method, url, headers, body \\ "", httpc_request_options \\ [])
+  def request(method, url, headers, body, httpc_request_options) when is_map body do
+    request(method, url, headers, URI.encode_query(body), httpc_request_options)
   end
-  def request(method, url, headers, body) do
+  def request(method, url, headers, body, httpc_request_options) do
     url     = String.to_char_list(url)
     headers = headers |> Map.put_new("content-type", "text/html")
     ct_type = headers["content-type"] |> String.to_char_list
@@ -37,14 +37,38 @@ defmodule Phoenix.Integration.HTTPClient do
     profile = :crypto.strong_rand_bytes(4) |> Base.encode16 |> String.to_atom
     {:ok, pid} = :inets.start(:httpc, profile: profile)
 
+    set_httpc_ipfamily(url, profile)
+
     resp =
       case method do
-        :get -> :httpc.request(:get, {url, header}, [], [body_format: :binary], pid)
-        _    -> :httpc.request(method, {url, header, ct_type, body}, [], [body_format: :binary], pid)
+        :get -> :httpc.request(:get, {url, header}, [], [body_format: :binary] ++ httpc_request_options, pid)
+        _    -> :httpc.request(method, {url, header, ct_type, body}, [], [body_format: :binary] ++ httpc_request_options, pid)
       end
 
     :inets.stop(:httpc, pid)
     format_resp(resp)
+  end
+
+  defp set_httpc_ipfamily(url_char_list, profile) do
+    uri = URI.parse(to_string(url_char_list))
+    ip = ip_for_inet_parse(uri.host)
+    case :inet.parse_address(ip) do
+      {:ok, {_, _, _, _, _, _, _, _}} ->
+        :ok = :httpc.set_options([ipfamily: :inet6], profile)
+      _ ->
+        :ok = :httpc.set_options([ipfamily: :inet], profile)
+    end
+  end
+
+  # cleanup IPv6 addresses like "[::1]" -> '::1'
+  defp ip_for_inet_parse(ip) do
+    ip =
+      if String.starts_with?(ip, "[") and String.ends_with?(ip, "]") do
+        String.slice(ip, 1..-2)
+      else
+        ip
+      end
+    to_char_list(ip)
   end
 
   defp format_resp({:ok, {{_http, status, _status_phrase}, headers, body}}) do
